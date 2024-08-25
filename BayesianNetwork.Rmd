@@ -5,16 +5,18 @@ output: html_notebook
 
 ```{r}
 #install.packages("tidyverse")
-library(tidyverse)
 #install.packages("conflicted")
 #install.packages("ggraph")
-library(igraph)
-library(ggraph)
-library(conflicted)
 #install.packages("foreach")
 #install.packages("doParallel")
+library(tidyverse)
+library(igraph)
+library(ggraph)
 library(foreach)
 library(doParallel)
+library(conflicted)
+
+
 
 
 
@@ -43,36 +45,48 @@ print_grouped_df <- function(grouped_df) {
 
 
 options(paged.print = FALSE)
+
+
+# f_20 and helper functions
+
+Prod_j<-function(df, i, parents, r){
+    if(!is.null(parents) & length(parents)!=0){
+      ret<-df %>%
+              group_by(across(all_of(parents))) %>%
+              summarise(N_ij = n()) %>% 
+              mutate(ratio = factorial(r[i] - 1) / factorial(N_ij + r[i] - 1))
+    }else{
+      ret <-df %>%
+              summarise(N_ij = n()) %>% 
+              mutate(ratio = factorial(r[i] - 1) / factorial(N_ij + r[i] - 1))
+    }
+  return(prod(ret$ratio))
+  }
+  
+Prod_jk<-function(df, i, parents){
+  if(length(c(parents, i))!=0){
+    ret<-(df %>%
+            group_by(across(all_of(c(parents, i)))) %>%
+            summarise(count = n()) %>%
+            mutate(factorial_count = factorial(count)))
+    return(prod(ret$factorial_count))
+  }
+}
+
+f_20<-function(original_df, i, parents, r){
+  prod_g_ij=Prod_j(original_df, i, parents, r)
+  prod_f_ijk=Prod_jk(original_df, i, parents)
+  return (prod_g_ij*prod_f_ijk)
+}
+
 # Algorithm
 k2_algorithm <- function(data, nodes, max_parents = 10) {
   
-  
-  
   # Initialize the network
   network <- setNames(vector("list", length(nodes)), nodes)
-  network[] <- lapply(network, function(x) character(0))
+  network[[nodes[1]]]<-character(0)
+  #network[] <- lapply(network, function(x) character(0))
   #E' PROBABILE CHE CI VOGLIA QUALCOSA DI PIU'SPECIFICO DI UNA LIST, ES. net.dag <- empty.graph(nodes=nodes) 
-  
-  Prod_j<-function(df, i, parents, r){
-    return(prod(df %>%
-              group_by_at(parents) %>%
-              summarise(N_ij = n()) %>% 
-              mutate(ratio = factorial(r[i] - 1) / factorial(N_ij + r[i] - 1))))
-  }
-  
-  Prod_jk<-function(df, i, parents){
-    return(prod(df %>%
-              group_by_at(c(parents, i)) %>%
-              summarise(count = n()) %>%
-              mutate(factorial_count = factorial(count))))
-  }
-
-  f_20<-function(original_df, i, parents, r){
-    prod_g_ij=Prod_j(original_df, i, parents, r)
-    prod_f_ijk=Prod_jk(original_df, i, parents)
-    return (prod_g_ij*prod_f_ijk)
-  }
-
   
   # Detect the number of available cores
   numCores <- parallel::detectCores()
@@ -82,32 +96,29 @@ k2_algorithm <- function(data, nodes, max_parents = 10) {
   
   # Register the cluster for parallel processing
   registerDoParallel(cl)
+  # Ensure cluster is stopped even if an error occurs
+  on.exit(stopCluster(cl))
   # Parallel execution example
-  result <- foreach(i = 1:5, .combine = c) %dopar% {
-    i^2  # Square of i
-  }
-  print(result)
-  stopCluster(cl)
+  #stopCluster(cl)
   
+  #Calculate r_i
+  r<-map_int(data, n_distinct)
   # Iterate over each node
-  result<-foreach (i = 2:length(nodes), .combine = 'c') %dopar% {
-    cat('NODO: ', i, '\n')
+  result<-foreach (i = 2:length(nodes), .combine = 'list', .packages = c('dplyr', 'purrr'), .export = c('Prod_jk', 'Prod_j', 'f_20')) %dopar% {
      # Calculate r_i:
-    r<-map_int(data, n_distinct)
-  
+
     parents <- c()
-    score_old <- Prod_jk(data, i, parents)
+    score_old <- f_20(data, i, parents, r)
     proceed <- TRUE
     while (proceed && length(parents) < max_parents) {
-      cat('PARENTS: ', parents, '\n')
 
       # Find the best candidate parent
       best_parent <- NULL
       best_score <- score_old
 
-      for (z in setdiff(nodes[1:(i-1)], parents)) {
-        best_score <- f_20(data, i, parents, r)
-        cat(best_score, score_old)
+      for (z in setdiff(1:(i-1), parents)) {
+        parents_trial<-c(parents, z)
+        best_score <- f_20(data, i, parents_trial, r)
         if (best_score > score_old) { 
           best_parent <- z
           score_old <- best_score
@@ -115,7 +126,7 @@ k2_algorithm <- function(data, nodes, max_parents = 10) {
       }
 
       # Update parents and score if necessary
-      if (!is.null(best_parent) & best_score > score_old) {
+      if (!is.null(best_parent)) {
         parents <- c(parents, best_parent)
         score_old <- best_score
       } else {
@@ -124,13 +135,13 @@ k2_algorithm <- function(data, nodes, max_parents = 10) {
     }
     
     # Return the parents for the current node
-    return(list(node = nodes[i], parents = if(length(parents) == 0) character(0) else sapply(parents, function(el) nodes[el])))
+    return(list(node = nodes[i], foundparents = if(length(parents) == 0) character(0) else sapply(parents, function(el) nodes[el])))
 
   }
   
   # Assign results to the network
   for (res in result) {
-    network[[res$node]] <- res$parents
+    network[[res$node]] <- res$foundparents
   }
   
   return(network)
@@ -164,15 +175,19 @@ print_network<-function(network){
 
 ```{r}
 trial_df <- data.frame(
-  x1 = c(1, 1, 0, 1, 0, 0, 0, 0, 1, 0),
-  x2 = c(0, 1, 1, 1, 0, 1, 1, 0, 1, 0),
+  x1 = c(1, 1, 0, 1, 0, 0, 1, 0, 1, 0),
+  x2 = c(0, 1, 0, 1, 0, 1, 1, 0, 1, 0),
   x3 = c(0, 1, 1, 1, 0, 1, 1, 0, 1, 0)
-)
+  
+  )
+```
 
 
-
+```{r}
 network<-k2_algorithm(trial_df, c("x1", "x2", "x3"), 2)
 print(network)
 print_network(network)
 ```
+
+
 
