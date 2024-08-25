@@ -15,6 +15,7 @@ library(ggraph)
 library(foreach)
 library(doParallel)
 library(conflicted)
+conflicts_prefer(dplyr::filter)
 
 
 
@@ -151,10 +152,27 @@ k2_algorithm <- function(data, nodes, max_parents = 10) {
 
 ```{r}
 print_network<-function(network){
-  edges <- tibble(
-      from = unlist(network),
-      to = rep(names(network), sapply(network, length))
-    )
+  # Crea un dataframe con tutti i nodi
+  nodes <- tibble(node = names(network))
+  
+  # Crea un dataframe con gli archi esistenti (quelli t.c. nodi_non_isolati <- V(graph)[degree(graph) > 0])
+  edges_existing <- tibble(
+    from = unlist(network),
+    to = rep(names(network), sapply(network, length))
+  )
+  
+  # Identifica i nodi isolati
+  nodes_isolated <- nodes %>%
+    filter(!(node %in% c(edges_existing$from, edges_existing$to)))
+  
+  # Crea un dataframe con gli archi autoreferenziali per i nodi isolati
+  edges_isolated <- tibble(
+    from = nodes_isolated$node,
+    to = nodes_isolated$node
+  )
+
+# Combina i due dataframe degli archi
+edges <- bind_rows(edges_existing, edges_isolated)
   # Creazione del grafo
   graph <- graph_from_data_frame(edges, directed = TRUE)
   # Visualizzazione del grafo
@@ -164,7 +182,7 @@ print_network<-function(network){
     geom_node_text(aes(label = name), repel = FALSE, fontface = "bold", nudge_x = +0, nudge_y = +0) +
     geom_edge_link(arrow = arrow(length = unit(0.2, "inches"), type = "closed"),
                    end_cap = circle(), start_cap = circle()) +
-    theme_graph() +
+    #theme_graph() +
     labs(title = "Rete Bayesiana")
 }
 
@@ -178,13 +196,18 @@ trial_df <- data.frame(
   x1 = c(1, 1, 0, 1, 0, 0, 1, 0, 1, 0),
   x2 = c(0, 1, 0, 1, 0, 1, 1, 0, 1, 0),
   x3 = c(0, 1, 1, 1, 0, 1, 1, 0, 1, 0)
-  
-  )
+)
+
+trial_df_zeros <- data.frame(
+  x1 = c(0, 1, 0, 1, 0, 0, 0, 0, 1, 0),
+  x2 = c(0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+  x3 = c(0, 1, 0, 1, 0, 1, 1, 0, 1, 0)
+)
 ```
 
 
 ```{r}
-network<-k2_algorithm(trial_df, c("x1", "x2", "x3"), 2)
+network<-k2_algorithm(trial_df_zeros, c("x1", "x2", "x3"), 2)
 print(network)
 print_network(network)
 ```
