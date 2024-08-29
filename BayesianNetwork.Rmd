@@ -293,7 +293,7 @@ print_network(network[['dag']])
 child <- read_csv('https://www.ccd.pitt.edu/wiki/images/CHILD10k.csv')
 child <- child |> select(BirthAsphyxia, Disease, Sick, DuctFlow, CardiacMixing, LungParench, LungFlow, LVH, Age, Grunting, HypDistrib, HypoxiaInO2, CO2, ChestXray, LVHreport, GruntingReport, LowerBodyO2, RUQO2, CO2Report, XrayReport)
 head(child)
-true_dag.child<-network2dag("[BirthAsphyxia][Disease|BirthAsphyxia][Sick|Disease][DuctFlow|Disease][CardiacMixing|Disease][LungParench|Disease][LungFlow|Disease][LVH|Disease][Age|Disease:Sick][Grunting|Sick:LungParench][HypDistrib|DuctFlow:CardiacMixing][HypoxiaInO2|CardiacMixing:LungParench][CO2|LungParench][ChestXray|LungParench:LungFlow][LVHreport|LVH][GruntingReport|Grunting][LowerBodyO2|HypDistrib:HypoxiaInO2][RUQO2|HypoxiaInO2][CO2Report|CO2][XrayReport|ChestXray]")
+true_dag.child<-model2network("[BirthAsphyxia][Disease|BirthAsphyxia][Sick|Disease][DuctFlow|Disease][CardiacMixing|Disease][LungParench|Disease][LungFlow|Disease][LVH|Disease][Age|Disease:Sick][Grunting|Sick:LungParench][HypDistrib|DuctFlow:CardiacMixing][HypoxiaInO2|CardiacMixing:LungParench][CO2|LungParench][ChestXray|LungParench:LungFlow][LVHreport|LVH][GruntingReport|Grunting][LowerBodyO2|HypDistrib:HypoxiaInO2][RUQO2|HypoxiaInO2][CO2Report|CO2][XrayReport|ChestXray]")
 ```
 ```{r}
 network<-k2_algorithm(child)
@@ -312,7 +312,7 @@ network<-k2_algorithm(sachs)
 print_network(network[['dag']])
 
 ```
-
+##Function that finds best nodes ordering with mcmc-metropolis-hastings-like procedure.
 ```{r}
 uniform_transposition_generator<-function(nodes){
   # Choose two distinct indices randomly
@@ -358,8 +358,11 @@ bn_mcmc_result<-bn_mcmc(uniform_transposition_generator, k2_algorithm, sachs, 10
 network_dag<-bn_mcmc_result[['best']][['dag']]
 chain_scores<-sapply(bn_mcmc_result[['chain']], function(el)(el[['score']]))
 chain_nodes_orderings<-lapply(bn_mcmc_result[['chain']], function(el)(el[['nodes']]))
+print(bn_mcmc_result[['best']][['score']])
 print_network(network_dag)
 ```
+
+
 ```{r}
 # Sample data
 y <- chain_scores
@@ -376,6 +379,51 @@ plot(y, xaxt = "n", xlab = "X-axis", ylab = "Y-axis", pch = 19, xlim = c(0,lengt
 axis(1, at = seq_along(y), labels = labels, las = 2)  # las = 2 rotates labels vertically
 
 ```
+##Function that finds best nodes ordering by uniformly sampling the corresponding permutation space.
+```{r}
+bn_ordering_sampling<-function(score_function, data_df, n_iter){
+  #score function is a function like k2_algorithm, that given an ordering and data, gives as output the list(network,score) of the corresponding best bayesian network
+  nodes<-names(data_df)
+  chain<-vector('list', n_iter)
+  for(i in 1:n_iter){
+    best_network<-score_function(data_df)
+    chain[[i]]<-list(nodes=nodes, dag=best_network[['dag']], score=best_network[['score']])
+    nodes<-sample(nodes)
+    data_df <- data_df |> select(all_of(nodes))
+  }
+  max_index<-which.max(lapply(chain, function(el)(el[['score']])))
+  return(list(chain=chain, best=chain[[max_index]]))
+}
+```
+
+```{r}
+bn_ordering_sampling_result<-bn_ordering_sampling(k2_algorithm, sachs, 10)
+network_dag<-bn_ordering_sampling_result[['best']][['dag']]
+chain_scores<-sapply(bn_ordering_sampling_result[['chain']], function(el)(el[['score']]))
+chain_nodes_orderings<-lapply(bn_ordering_sampling_result[['chain']], function(el)(el[['nodes']]))
+print(bn_ordering_sampling_result[['best']][['score']])
+print_network(network_dag)
+```
+
+
+```{r}
+# Sample data
+y <- chain_scores
+x <- chain_nodes_orderings
+print(x)
+
+# Convert character vectors to single strings
+labels <- sapply(x, function(vec) paste(vec, collapse = " "))
+
+# Create a basic plot
+plot(y, xaxt = "n", xlab = "X-axis", ylab = "Y-axis", pch = 19, xlim = c(0,length(x)), ylim = c(min(chain_scores), max(chain_scores)))
+
+# Add custom x-axis labels
+axis(1, at = seq_along(y), labels = labels, las = 2)  # las = 2 rotates labels vertically
+
+```
+
+
 
 
 
