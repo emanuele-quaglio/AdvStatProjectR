@@ -9,18 +9,17 @@ output: html_notebook
 #install.packages("ggraph")
 #install.packages("foreach")
 #install.packages("doParallel")
+#install.packages("Rgraphviz")
+#install.packages("bnlearn")
 library(tidyverse)
 library(igraph)
 library(ggraph)
 library(foreach)
 library(doParallel)
 library(conflicted)
+#library(Rgraphviz)
+library(bnlearn)
 conflicts_prefer(dplyr::filter)
-
-
-
-
-
 ```
 
 ```{r}
@@ -44,45 +43,93 @@ print_grouped_df <- function(grouped_df) {
   }
 }
 
-
 options(paged.print = FALSE)
 
+logfactorial<-function(n){
+  if(n>=2){
+    res<-sum(log(seq(2, n)))
+  }else{
+    res<-0
+  }
+  return(res)
+}
 
-# f_20 and helper functions
-
-Prod_j<-function(df, i, parents, r){
-    if(!is.null(parents) & length(parents)!=0){
-      ret<-df %>%
-              group_by(across(all_of(parents))) %>%
-              summarise(N_ij = n()) %>% 
-              mutate(ratio = factorial(r[i] - 1) / factorial(N_ij + r[i] - 1))
-    }else{
-      ret <-df %>%
-              summarise(N_ij = n()) %>% 
-              mutate(ratio = factorial(r[i] - 1) / factorial(N_ij + r[i] - 1))
-    }
-  return(prod(ret$ratio))
+# Helper Function: Prod_j
+Prod_j <- function(df, i, parents, r) {
+  #print(paste("Running Prod_j with i =", i))
+  #print(paste("Parents:", paste(parents, collapse = ", ")))
+  
+  if (!is.null(parents) & length(parents) != 0) {
+    #print("Grouping by parents...")
+    ret <- df %>%
+      group_by(across(all_of(parents))) %>%
+      summarise(N_ij = n(), .groups = "keep") %>% 
+      mutate(ratio= logfactorial(r[i] - 1)- logfactorial(N_ij + r[i] - 1))
+  } else {
+    #print("No parents to group by...")
+    ret <- df %>%
+      summarise(N_ij = n(), .groups = "keep") %>% 
+      mutate(ratio= logfactorial(r[i] - 1) - logfactorial(N_ij + r[i] - 1))
   }
   
-Prod_jk<-function(df, i, parents){
-  if(length(c(parents, i))!=0){
-    ret<-(df %>%
-            group_by(across(all_of(c(parents, i)))) %>%
-            summarise(count = n()) %>%
-            mutate(factorial_count = factorial(count)))
-    return(prod(ret$factorial_count))
+  #print("Intermediate result of Prod_j:")
+  #print(ret)
+  
+  result <- sum(ret$ratio)
+  #print(paste("Result of Prod_j:", result))
+  return(result)
+}
+
+# Helper Function: Prod_jk
+Prod_jk <- function(df, i, parents) {
+  #print(paste("Running Prod_jk with i =", i))
+  #print(paste("Parents:", paste(parents, collapse = ", ")))
+  
+  if (length(c(parents, i)) != 0) {
+    #print("Grouping by parents and i...")
+    ret <- df %>%
+      group_by(across(all_of(c(parents, i)))) %>%
+      summarise(count = n(), .groups = "keep") %>%
+      mutate(factorial_count = logfactorial(count))
+    
+    #print("Intermediate result of Prod_jk:")
+    #print(ret)
+    
+    result <- sum(ret$factorial_count)
+    #print(paste("Result of Prod_jk:", result))
+    return(result)
+  } else {
+    #print("No grouping needed for Prod_jk.")
+    return(1)
   }
 }
 
-f_20<-function(original_df, i, parents, r){
-  prod_g_ij=Prod_j(original_df, i, parents, r)
-  prod_f_ijk=Prod_jk(original_df, i, parents)
-  return (prod_g_ij*prod_f_ijk)
+# Main Function: f_20
+f_20 <- function(original_df, i, parents, r) {
+  #print(paste("Running f_20 with i =", i))
+  #print(paste("Parents:", paste(parents, collapse = ", ")))
+  
+  prod_g_ij <- Prod_j(original_df, i, parents, r)
+  prod_f_ijk <- Prod_jk(original_df, i, parents)
+  
+  #print(paste("prod_g_ij:", prod_g_ij))
+  #print(paste("prod_f_ijk:", prod_f_ijk))
+  
+  result <- prod_g_ij + prod_f_ijk 
+  #print(paste("Result of f_20:", result))
+  
+  return(result)
 }
 
 # Algorithm
-k2_algorithm <- function(data, nodes, max_parents = 10) {
+k2_algorithm <- function(data, nodes=NULL, max_parents = NULL) {
   
+  if(is.null(nodes)){
+    nodes<-names(data)
+  }
+  if(is.null(max_parents)){
+    max_parents<-length(nodes)-1
+  }
   # Initialize the network
   network <- setNames(vector("list", length(nodes)), nodes)
   network[[nodes[1]]]<-character(0)
@@ -105,13 +152,13 @@ k2_algorithm <- function(data, nodes, max_parents = 10) {
   #Calculate r_i
   r<-map_int(data, n_distinct)
   # Iterate over each node
-  result<-foreach (i = 2:length(nodes), .combine = 'list', .packages = c('dplyr', 'purrr'), .export = c('Prod_jk', 'Prod_j', 'f_20')) %dopar% {
+  result<-foreach (i = 2:length(nodes), .combine = 'c', .packages = c('dplyr', 'purrr'), .export = c('logfactorial', 'Prod_jk', 'Prod_j', 'f_20')) %dopar% {
      # Calculate r_i:
 
     parents <- c()
     score_old <- f_20(data, i, parents, r)
     proceed <- TRUE
-    while (proceed && length(parents) < max_parents) {
+    while (proceed & length(parents) < max_parents) {
 
       # Find the best candidate parent
       best_parent <- NULL
@@ -136,19 +183,31 @@ k2_algorithm <- function(data, nodes, max_parents = 10) {
     }
     
     # Return the parents for the current node
-    return(list(node = nodes[i], foundparents = if(length(parents) == 0) character(0) else sapply(parents, function(el) nodes[el])))
+    return(list(list(node = nodes[i], foundparents = if(length(parents) == 0) character(0) else sapply(parents, function(el) nodes[el]), best_score=best_score)))
 
   }
-  
+  #print(result)
   # Assign results to the network
+  total_best_score<-0
   for (res in result) {
+    #print('_____________________')
+    #print(typeof(res))
+    #print(str(res))
+    #print('res__________')
+    #print(res)
+    #print('resnode__________')
+    #print(res$node)
+    #print('resparents__________')
+    #print(res$foundparents)
     network[[res$node]] <- res$foundparents
+    total_best_score<-total_best_score+res$best_score
   }
   
-  return(network)
+  return(list(dag=network, score=total_best_score))
 }
 
 ```
+
 
 ```{r}
 print_network<-function(network){
@@ -201,16 +260,126 @@ trial_df <- data.frame(
 trial_df_zeros <- data.frame(
   x1 = c(0, 1, 0, 1, 0, 0, 0, 0, 1, 0),
   x2 = c(0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
-  x3 = c(0, 1, 0, 1, 0, 1, 1, 0, 1, 0)
+  x3 = c(0, 1, 0, 1, 0, 1, 1, 0, 1, 0),
+  x4 = c(0, 1, 1, 1, 0, 1, 1, 0, 1, 0)
 )
+
 ```
 
 
 ```{r}
-network<-k2_algorithm(trial_df_zeros, c("x1", "x2", "x3"), 2)
-print(network)
-print_network(network)
+network<-k2_algorithm(trial_df)
+print(network[['dag']])
+print(network[['score']])
+print_network(network[['dag']])
 ```
+```{r}
+asia <- read_csv('https://www.ccd.pitt.edu/wiki/images/ASIA10k.csv')
+head(asia)
+asia10<-head(asia, 10)
+true_dag.asia<- model2network("[asia][smoke][tub|asia][lung|smoke][bronc|smoke][dysp|bronc:either][either|tub:lung][xray|either]")
+```
+
+```{r}
+#asia_net <- k2.iter(dataset=asia, parents.nmax=2, f=log.f, k2=k2, n.iter=5, seed=1, type='bde', iss=10)
+
+network<-k2_algorithm(asia)
+#print(network)
+print_network(network[['dag']])
+```
+
+
+```{r}
+child <- read_csv('https://www.ccd.pitt.edu/wiki/images/CHILD10k.csv')
+child <- child |> select(BirthAsphyxia, Disease, Sick, DuctFlow, CardiacMixing, LungParench, LungFlow, LVH, Age, Grunting, HypDistrib, HypoxiaInO2, CO2, ChestXray, LVHreport, GruntingReport, LowerBodyO2, RUQO2, CO2Report, XrayReport)
+head(child)
+true_dag.child<-network2dag("[BirthAsphyxia][Disease|BirthAsphyxia][Sick|Disease][DuctFlow|Disease][CardiacMixing|Disease][LungParench|Disease][LungFlow|Disease][LVH|Disease][Age|Disease:Sick][Grunting|Sick:LungParench][HypDistrib|DuctFlow:CardiacMixing][HypoxiaInO2|CardiacMixing:LungParench][CO2|LungParench][ChestXray|LungParench:LungFlow][LVHreport|LVH][GruntingReport|Grunting][LowerBodyO2|HypDistrib:HypoxiaInO2][RUQO2|HypoxiaInO2][CO2Report|CO2][XrayReport|ChestXray]")
+```
+```{r}
+network<-k2_algorithm(child)
+#print(network)
+print_network(network[['dag']])
+```
+```{r}
+sachs <- read_csv('https://www.ccd.pitt.edu/wiki/images/SACHS10k.csv')
+sachs <- sachs |> select(PKC, Plcg, PKA, PIP3, Raf, Jnk, P38, PIP2, Mek, Erk, Akt)
+head(sachs)
+true_dag.sachs <- model2network("[PKC][PKA|PKC][Raf|PKC:PKA][Mek|PKC:PKA:Raf][Erk|Mek:PKA][Akt|Erk:PKA][P38|PKC:PKA][Jnk|PKC:PKA][Plcg][PIP3|Plcg][PIP2|Plcg:PIP3]")
+```
+```{r}
+network<-k2_algorithm(sachs)
+#print(network)
+print_network(network[['dag']])
+
+```
+
+```{r}
+uniform_transposition_generator<-function(nodes){
+  # Choose two distinct indices randomly
+  indices <- sample(seq_along(nodes), 2)
+  
+  # Swap the elements at these indices
+  transposed_nodes <- nodes
+  temp <- transposed_nodes[indices[1]]
+  transposed_nodes[indices[1]] <- transposed_nodes[indices[2]]
+  transposed_nodes[indices[2]] <- temp
+  return(transposed_nodes)
+}
+bn_mcmc<-function(proposal_generator, score_function, data_df, n_iter){ 
+  #proposal generator is a function that given an ordering, randomly samples a new ordering according to some distribution on the permutation space
+  #score function is a function like k2_algorithm, that given an ordering and data, gives as output the list(network,score) of the corresponding best bayesian network
+  nodes<-names(data_df)
+  chain<-vector('list', n_iter)
+  best_network<-score_function(data_df)
+  best_score<-best_network[['score']]
+  chain[[1]]<-list(nodes=nodes, dag=best_network[['dag']], score=best_score)
+  old_best_score<-best_score
+  
+  for(i in 2:n_iter){
+    
+    proposal_nodes<-proposal_generator(nodes)
+    proposal_data_df <- data_df |> select(all_of(proposal_nodes))
+    proposal_best_network<-score_function(proposal_data_df)
+    proposal_best_score<-proposal_best_network[['score']]
+    if(runif(1) < min(1, exp(best_score-old_best_score))){ #we take exponential because we are dealing with log of probabilities
+      nodes<-proposal_nodes
+      #data_df <-proposal_data_df
+      best_network<-proposal_best_network
+    }
+    chain[[i]]<-list(nodes=nodes, dag=best_network[['dag']], score=best_network[['score']])
+  }
+  max_index<-which.max(lapply(chain, function(el)(el[['score']])))
+  return(list(chain=chain, best=chain[[max_index]]))
+}
+```
+
+```{r}
+bn_mcmc_result<-bn_mcmc(uniform_transposition_generator, k2_algorithm, sachs, 10)
+network_dag<-bn_mcmc_result[['best']][['dag']]
+chain_scores<-sapply(bn_mcmc_result[['chain']], function(el)(el[['score']]))
+chain_nodes_orderings<-lapply(bn_mcmc_result[['chain']], function(el)(el[['nodes']]))
+print_network(network_dag)
+```
+```{r}
+# Sample data
+y <- chain_scores
+x <- chain_nodes_orderings
+print(x)
+
+# Convert character vectors to single strings
+labels <- sapply(x, function(vec) paste(vec, collapse = " "))
+
+# Create a basic plot
+plot(y, xaxt = "n", xlab = "X-axis", ylab = "Y-axis", pch = 19, xlim = c(0,length(x)), ylim = c(min(chain_scores), max(chain_scores)))
+
+# Add custom x-axis labels
+axis(1, at = seq_along(y), labels = labels, las = 2)  # las = 2 rotates labels vertically
+
+```
+
+
+
+
 
 
 
