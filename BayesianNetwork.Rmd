@@ -24,6 +24,9 @@ conflicts_prefer(dplyr::filter)
 ```
 
 ```{r}
+rds_name<-function(title){
+  return(paste0(title,as.numeric(Sys.time()) * 1000, '.rds'))
+}
 print_grouped_df <- function(grouped_df) {
   # Loop over each group
   groups <- group_split(grouped_df)
@@ -44,13 +47,13 @@ print_grouped_df <- function(grouped_df) {
   }
 }
 
-create_bn_dag <- function(net) {
+create_bn_dag <- function(dag) {
 
-    net_nodes <- names(net$dag)
+    net_nodes <- names(dag)
 
     our.net.dag <- empty.graph(net_nodes)
 
-    net_parents <- net$dag
+    net_parents <- dag
    
     for (node in net_nodes) {
         if (all(net_parents[node] != "character(0)")) {
@@ -328,8 +331,60 @@ true_dag.sachs <- model2network("[PKC][PKA|PKC][Raf|PKC:PKA][Mek|PKC:PKA:Raf][Er
 network<-k2_algorithm(sachs)
 #print(network)
 print_network(network[['dag']])
-
 ```
+
+```{r}
+datasets<-list(asia=asia, child=child, sachs=sachs)
+true_dags<-list(asia=true_dag.asia, child=true_dag.child, sachs=true_dag.sachs)
+true_max_parents<-list(asia=2, child=2, sachs=3)
+```
+
+Comparison between predicted networks and ground truth (expected) networks, as a function of dataset size.
+```{r}
+f1_error<-function(my_dag, true_dag, n_true_edges=NULL){
+  if(is.null(n_true_edges)){
+    n_true_edges<-nrow(arcs(true_dag))
+  }
+  dag_compare <- bnlearn::compare(true_dag, my_dag) 
+  precision<-as.numeric(dag_compare["tp"])/(as.numeric(dag_compare["tp"])+as.numeric(dag_compare["fp"])) 
+  recall<-as.numeric(dag_compare["tp"])/n_true_edges  
+  f1<-2*precision*recall/(precision+recall) 
+  return(1-f1) 
+}
+```
+
+```{r}
+error_vs_data_size<-function(network_learner, data_df, true_dag){
+  spanned=c(10,20,30,50,100,200,300, 500, 1000, 5000, 10000)
+  errors=vector('list', length(spanned))
+  for(i in 1:length(spanned)){
+    my_dag<-create_bn_dag(network_learner(head(data_df, spanned[i]))[['dag']])
+    errors[[i]]<-f1_error(my_dag, true_dag)
+  }
+  plot(spanned[1:length(errors)],errors,xlab='Dataset size',ylab='Error',type='l',col='blue') 
+  return(list(x=spanned[1:length(errors)], y=errors))
+}
+```
+First case: initialization with expected nodes ordering and expected max number of parents.
+```{r}
+constrained_nodes_parents_error_vs_datasize<-setNames(vector("list", 3), c("asia", "child", "sachs"))
+CNPEVD<-constrained_nodes_parents_error_vs_datasize
+for( dataset_name in c('asia','child','sachs')){
+  CNPEVD[[dataset_name]]<-error_vs_data_size(function(data)(k2_algorithm(data, max_parents = 2)), datasets[[dataset_name]], true_dags[[dataset_name]])
+}
+saveRDS(CNPEVD, file=rds_name('CNPEVD'))
+```
+
+Second case: initialization with expected nodes ordering but 'unconstrained' number of parents.
+```{r}
+constrained_nodes_error_vs_datasize<-error_vs_data_size(k2_algorithm, child, true_dag.child)
+constrained_nodes_error_vs_datasize<-setNames(vector("list", 3), c("asia", "child", "sachs"))
+CNEVD<-constrained_nodes_error_vs_datasize
+for( dataset_name in c('asia','child','sachs')){
+  CNPEVD[[dataset_name]]<-error_vs_data_size(k2_algorithm, datasets[[dataset_name]], true_dags[[dataset_name]])
+}
+```
+
 
 ##Function that finds best nodes ordering with mcmc-metropolis-hastings-like procedure.
 
@@ -389,7 +444,7 @@ bn_mcmc<-function(proposal_generator, score_function, data_df, n_iter){
 ```
 
 ```{r}
-n_iter<-1000
+n_iter<-5
 start.time<-proc.time()
 bn_mcmc_result<-bn_mcmc(ztbinom_permutation_generator, k2_algorithm, sachs, n_iter)
 end.time<-proc.time()
@@ -397,7 +452,7 @@ cat('bn_mcmc duration',n_iter, 'iterations: ', end.time-start.time)
 ```
 
 ```{r}
-saveRDS(bn_mcmc_result, file=paste0('mcmc_ztbin',as.numeric(Sys.time()) * 1000, '.rds'))
+saveRDS(bn_mcmc_result, file=rds_name('mcmc_ztbin'))
 object.size(bn_mcmc_result[['chain']])
 network_dag<-bn_mcmc_result[['best']][['dag']]
 chain_scores<-sapply(bn_mcmc_result[['chain']], function(el)(el[['score']]))
@@ -426,7 +481,7 @@ print_scores_vs_ordering<-function(chain_scores, chain_nodes_orderings){
 
 ```{r}
 max_score_vs_iter<-function(chain_scores){ 
-  plot(1:length(chain_scores),cummax(chain_scores),xlab='Iteration',ylab='Max(Score)',col='blue',type='l') 
+  plot(1:length(chain_scores),cummax(chain_scores),xlab='Iteration',ylab='Running max score',col='blue',type='l') 
 }
 ```
 
@@ -443,7 +498,7 @@ max_score_vs_iter(chain_scores)
 ##Function that finds best nodes ordering by uniformly sampling the corresponding permutation space.
 
 ```{r}
-bn_ordering_sampling<-function(score_function, data_df, n_iter){
+bn_uniform<-function(score_function, data_df, n_iter){
   #score function is a function like k2_algorithm, that given an ordering and data, gives as output the list(network,score) of the corresponding best bayesian network
   nodes<-names(data_df)
   chain<-vector('list', n_iter)
@@ -459,20 +514,20 @@ bn_ordering_sampling<-function(score_function, data_df, n_iter){
 ```
 
 ```{r}
-n_iter<-100
+n_iter<-5
 start.time<-proc.time()
-bn_ordering_sampling_result<-bn_ordering_sampling(k2_algorithm, sachs, n_iter)
+bn_uniform_result<-bn_uniform(k2_algorithm, sachs, n_iter)
 end.time<-proc.time()
 cat('bn_ordering_sampling duration' ,n_iter, 'iterations: ', end.time-start.time)
 ```
 
 ```{r}
-saveRDS(bn_ordering_sampling_result, file=paste0('unif_sample',as.numeric(Sys.time()) * 1000, '.rds'))
-object.size(bn_mcmc_result[['chain']])
-network_dag<-bn_ordering_sampling_result[['best']][['dag']]
-chain_scores<-sapply(bn_ordering_sampling_result[['chain']], function(el)(el[['score']]))
-chain_nodes_orderings<-lapply(bn_ordering_sampling_result[['chain']], function(el)(el[['nodes']]))
-print(bn_ordering_sampling_result[['best']][['score']])
+saveRDS(bn_uniform_result, file=rds_name('unif_ordering'))
+object.size(bn_uniform_result[['chain']])
+network_dag<-bn_uniform_result[['best']][['dag']]
+chain_scores<-sapply(bn_uniform_result[['chain']], function(el)(el[['score']]))
+chain_nodes_orderings<-lapply(bn_uniform_result[['chain']], function(el)(el[['nodes']]))
+print(bn_uniform_result[['best']][['score']])
 print_network(network_dag)
 ```
 
@@ -483,4 +538,105 @@ print_scores_vs_ordering(chain_scores, chain_nodes_orderings)
 ```{r}
 max_score_vs_iter(chain_scores)
 ```
+```{r}
+bic_score<-function(dag, data){
+  return(score(dag , data = data , type = "bic"))
+}
+```
+
+```{r}
+dag_computation<-function(chain_scores,true_dag,chain_dags){  
+  n_true_edges<-nrow(arcs(true_dag)) 
+  # helper function to find the index of the cummax 
+   
+  find_index<-function(max_value,chain_scores){ 
+      index<-which(chain_scores==max_value) 
+      return(index) 
+  } 
+  
+  #compare_dags helper function between the i-th network and true network 
+  compare_dags <- function(index,true_dag, our_nets, n_true_edges=NULL) { 
+      if(is.null(n_true_edges)){
+        n_true_edges<-nrow(arcs(true_dag)) 
+      }
+      our_net<-our_nets[[index]] 
+      our_dag<-create_bn_dag(our_net) 
+      return(f1_error(our_dag, true_dag, n_true_edges=n_true_edges))
+      #dag_shd <- shd(true_dag, our_dag) 
+   
+  } 
+   
+  indexes<-sapply(cummax(chain_scores),find_index,chain_scores) 
+   
+  #perform the comparison once the index is retrieved 
+  errors<-sapply(indexes,function(index, true_dag, our_nets)(compare_dags(index, true_dag, our_nets, n_true_edges = n_true_edges)),true_dag,our_nets=chain_dags) 
+  plot(1:length(errors),errors,xlab='Iteration',ylab='Error',main='Error Comparison',type='l',col='blue') 
+  return(errors) 
+ 
+} 
+```
+
+```{r}
+dag_computation(
+                sapply(bn_uniform_result[['chain']], function(el)(el[['score']])),
+                true_dag.sachs,
+                lapply(bn_uniform_result[["chain"]],function(el){el[["dag"]]})
+                )
+```
+FILIPPO RUNNA QUESTA CELLA E COMMENTA (togli r da dalle graffe) LA SUCCESSIVA
+
+No max parents, mcmc and uniform sampling of permuatations
+```{r}
+unconstrained_bn_mcmc_results<-setNames(vector("list", 3), c("asia", "child", "sachs"))
+UBMR<-unconstrained_bn_mcmc_results
+for( dataset_name in c('asia','child','sachs')){
+  n_iter<-1000
+  start.time<-proc.time()
+  UBMR[[dataset_name]]<-bn_mcmc(ztbinom_permutation_generator, k2_algorithm, datasets[[dataset_name]], n_iter)
+  end.time<-proc.time()
+  cat('bn_mcmc', dataset_name ,'duration',n_iter, 'iterations: ', end.time-start.time)
+}
+saveRDS(UBMR, file=rds_name('UBMR'))
+
+unconstrained_bn_uniform_results<-setNames(vector("list", 3), c("asia", "child", "sachs"))
+UBUR<-unconstrained_bn_uniform_results
+for( dataset_name in c('asia','child','sachs')){
+  n_iter<-1000
+  start.time<-proc.time()
+  UBUR[[dataset_name]]<-bn_uniform(k2_algorithm, datasets[[dataset_name]], n_iter)
+  end.time<-proc.time()
+  cat('bn_uniform', dataset_name ,'duration',n_iter, 'iterations: ', end.time-start.time)
+}
+saveRDS(UBUR, file=rds_name('UBUR'))
+```
+
+
+EMANUELE RUNNA QUESTA CELLA E COMMENTA (togli r da dalle graffe) LA PRECEDENTE
+
+Set max parents, mcmc and uniform sampling of permuatations
+```{r}
+constrained_bn_mcmc_results<-setNames(vector("list", 3), c("asia", "child", "sachs"))
+CBMR<-constrained_bn_mcmc_results
+for( dataset_name in c('asia','child','sachs')){
+  n_iter<-1000
+  start.time<-proc.time()
+  CBMR[[dataset_name]]<-bn_mcmc(ztbinom_permutation_generator, function(data)(k2_algorithm(data, max_parents = true_max_parents[[dataset_name]])), datasets[[dataset_name]], n_iter)
+  end.time<-proc.time()
+  cat('bn_mcmc', dataset_name ,'duration',n_iter, 'iterations: ', end.time-start.time)
+}
+saveRDS(CBMR, file=rds_name('CBMR'))
+
+constrained_bn_uniform_results<-setNames(vector("list", 3), c("asia", "child", "sachs"))
+CBUR<-constrained_bn_uniform_results
+for( dataset_name in c('asia','child','sachs')){
+  n_iter<-1000
+  start.time<-proc.time()
+  CBUR[[dataset_name]]<-bn_uniform(function(data)(k2_algorithm(data, max_parents = true_max_parents[[dataset_name]])), datasets[[dataset_name]], n_iter)
+  end.time<-proc.time()
+  cat('bn_uniform', dataset_name ,'duration',n_iter, 'iterations: ', end.time-start.time)
+}
+saveRDS(CBUR, file=rds_name('CBUR'))
+```
+
+
 
