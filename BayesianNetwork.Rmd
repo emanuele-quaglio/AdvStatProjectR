@@ -11,6 +11,8 @@ output: html_notebook
 #install.packages("doParallel")
 #install.packages("bnlearn")
 #install.packages("actuar")
+#install.packages("BiocManager")
+#BiocManager::install("Rgraphviz")
 library(tidyverse)
 library(igraph)
 library(ggraph)
@@ -19,7 +21,9 @@ library(doParallel)
 library(conflicted)
 library(bnlearn)
 library(actuar, include.only = c("rztbinom"))
+library(Rgraphviz)
 #library(dplyr, include.only = c("select", "mutate")
+
 conflicts_prefer(dplyr::filter)
 ```
 
@@ -186,7 +190,7 @@ k2_algorithm <- function(data, nodes=NULL, max_parents = NULL) {
       best_parent <- NULL
       best_score <- score_old
 
-      for (z in setdiff(1:(i-1), parents)) {
+      for (z in base::setdiff(1:(i-1), parents)) {
         parents_trial<-c(parents, z)
         best_score <- f_20(data, i, parents_trial, r)
         if (best_score > score_old) { 
@@ -260,13 +264,16 @@ edges <- bind_rows(edges_existing, edges_isolated)
     geom_node_point(shape = 21, size = 20, color = "green") + 
     geom_node_text(aes(label = name), repel = FALSE, fontface = "bold", nudge_x = +0, nudge_y = +0) + 
     geom_edge_link(arrow = arrow(length = unit(0.2, "inches"), type = "closed"), 
-                   end_cap = circle(), start_cap = circle()) + 
+                   end_cap = circle(), start_cap = circle())
                    #, curve = 0.2) + 
-    labs(title = "Rete Bayesiana") 
+    #labs(title = "Rete Bayesiana") 
 }
+```
 
-
-
+```{r}
+plot_dag<-function(dag){
+  graphviz.plot(create_bn_dag(dag))
+}
 ```
 
 ```{r}
@@ -300,24 +307,10 @@ true_dag.asia<- model2network("[asia][smoke][tub|asia][lung|smoke][bronc|smoke][
 ```
 
 ```{r}
-#asia_net <- k2.iter(dataset=asia, parents.nmax=2, f=log.f, k2=k2, n.iter=5, seed=1, type='bde', iss=10)
-
-network<-k2_algorithm(asia)
-#print(network)
-print_network(network[['dag']])
-```
-
-```{r}
 child <- read_csv('https://www.ccd.pitt.edu/wiki/images/CHILD10k.csv')
 child <- child |> select(BirthAsphyxia, Disease, Sick, DuctFlow, CardiacMixing, LungParench, LungFlow, LVH, Age, Grunting, HypDistrib, HypoxiaInO2, CO2, ChestXray, LVHreport, GruntingReport, LowerBodyO2, RUQO2, CO2Report, XrayReport)
 head(child)
 true_dag.child<-model2network("[BirthAsphyxia][Disease|BirthAsphyxia][Sick|Disease][DuctFlow|Disease][CardiacMixing|Disease][LungParench|Disease][LungFlow|Disease][LVH|Disease][Age|Disease:Sick][Grunting|Sick:LungParench][HypDistrib|DuctFlow:CardiacMixing][HypoxiaInO2|CardiacMixing:LungParench][CO2|LungParench][ChestXray|LungParench:LungFlow][LVHreport|LVH][GruntingReport|Grunting][LowerBodyO2|HypDistrib:HypoxiaInO2][RUQO2|HypoxiaInO2][CO2Report|CO2][XrayReport|ChestXray]")
-```
-
-```{r}
-network<-k2_algorithm(child)
-#print(network)
-print_network(network[['dag']])
 ```
 
 ```{r}
@@ -328,18 +321,34 @@ true_dag.sachs <- model2network("[PKC][PKA|PKC][Raf|PKC:PKA][Mek|PKC:PKA:Raf][Er
 ```
 
 ```{r}
-network<-k2_algorithm(sachs)
-#print(network)
-print_network(network[['dag']])
-```
-
-```{r}
+dataset_names<-c('asia', 'child', 'sachs')
 datasets<-list(asia=asia, child=child, sachs=sachs)
 true_dags<-list(asia=true_dag.asia, child=true_dag.child, sachs=true_dag.sachs)
 true_max_parents<-list(asia=2, child=2, sachs=3)
+dataset_colors<-c(asia='goldenrod', child='seagreen', sachs='firebrick')
 ```
 
-Comparison between predicted networks and ground truth (expected) networks, as a function of dataset size.
+##Let's first constrain the nodes ordering of each network according to the ground truth DAG's expected.
+
+###Let's first test our k2 algorithm plotting the resulted best network, for all datasets.
+Constrained max number of parents according to ground truth expected DAG's
+```{r}
+for(dataset_name in dataset_names){
+  network<-k2_algorithm(datasets[[dataset_name]], max_parents = true_max_parents[[dataset_name]] )
+  plot_dag(network[['dag']])
+}
+```
+
+Unconstrained max number of parents.
+```{r}
+for(dataset_name in dataset_names){
+  network<-k2_algorithm(datasets[[dataset_name]] )
+  plot_dag(network[['dag']])
+}
+```
+
+###Comparison between predicted networks and ground truth (expected) networks, as a function of dataset size.
+Error is calculated as the complementary of the F1-score.
 ```{r}
 f1_error<-function(my_dag, true_dag, n_true_edges=NULL){
   if(is.null(n_true_edges)){
@@ -365,6 +374,7 @@ error_vs_data_size<-function(network_learner, data_df, true_dag){
   return(list(x=spanned[1:length(errors)], y=errors))
 }
 ```
+
 First case: initialization with expected nodes ordering and expected max number of parents.
 ```{r}
 constrained_nodes_parents_error_vs_datasize<-setNames(vector("list", 3), c("asia", "child", "sachs"))
@@ -377,16 +387,123 @@ saveRDS(CNPEVD, file=rds_name('CNPEVD'))
 
 Second case: initialization with expected nodes ordering but 'unconstrained' number of parents.
 ```{r}
-constrained_nodes_error_vs_datasize<-error_vs_data_size(k2_algorithm, child, true_dag.child)
+#constrained_nodes_error_vs_datasize<-error_vs_data_size(k2_algorithm, child, true_dag.child)
 constrained_nodes_error_vs_datasize<-setNames(vector("list", 3), c("asia", "child", "sachs"))
 CNEVD<-constrained_nodes_error_vs_datasize
 for( dataset_name in c('asia','child','sachs')){
-  CNPEVD[[dataset_name]]<-error_vs_data_size(k2_algorithm, datasets[[dataset_name]], true_dags[[dataset_name]])
+  CNEVD[[dataset_name]]<-error_vs_data_size(k2_algorithm, datasets[[dataset_name]], true_dags[[dataset_name]])
+}
+saveRDS(CNEVD, file=rds_name('CNEVD'))
+```
+
+Plot all datasets in one:
+
+Constrained parents:
+```{r}
+spanned <- c(10, 20, 30, 50, 100, 200, 300, 500, 1000, 5000, 10000) 
+endrange <- 9 
+
+# Set graphical parameters
+par(mgp = c(1.5, 0.5, 0))  # Adjust mgp to reduce space (default is c(3, 1, 0)) 
+# Plot the 'asia' dataset with filled dots 
+plot(CNPEVD[['asia']][['x']][1:endrange],  
+     CNPEVD[['asia']][['y']][1:endrange],  
+     type='b',  
+     ylim=c(0,1),  
+     ylab="Error",  
+     xlab="Dataset size",  
+     col='goldenrod',  
+     pch=16)  # pch=16 for filled circles 
+ 
+# Define datasets and colors 
+dataset_name <- c('child', 'sachs') 
+cols <- c("seagreen", "firebrick") 
+ 
+# Loop through and add lines for 'child' and 'sachs' with filled dots 
+for(j in 1:length(dataset_name)) { 
+  lines(CNPEVD[[dataset_name[j]]][['x']][1:endrange],  
+        CNPEVD[[dataset_name[j]]][['y']][1:endrange],  
+        col=cols[j],  
+        type='b',  
+        pch=16)  # pch=16 for filled circles 
+} 
+
+# Add legend with matching colors 
+legend(x='topright', legend=c('asia', 'child', 'sachs'), col=c('goldenrod', 'seagreen', 'firebrick'), lty=1, pch=16)
+```
+Unconstrained parents:
+```{r}
+spanned <- c(10, 20, 30, 50, 100, 200, 300, 500, 1000, 5000, 10000) 
+endrange <- 9 
+
+# Set graphical parameters
+par(mgp = c(1.5, 0.5, 0))  # Adjust mgp to reduce space (default is c(3, 1, 0)) 
+# Plot the 'asia' dataset with filled dots 
+plot(CNEVD[['asia']][['x']][1:endrange],  
+     CNEVD[['asia']][['y']][1:endrange],  
+     type='b',  
+     ylim=c(0,1), 
+     ylab="Error",  
+     xlab="Dataset size",  
+     col='goldenrod',  
+     pch=16)  # pch=16 for filled circles 
+ 
+# Define datasets and colors 
+dataset_name <- c('child', 'sachs') 
+cols <- c("seagreen", "firebrick") 
+ 
+# Loop through and add lines for 'child' and 'sachs' with filled dots 
+for(j in 1:length(dataset_name)) { 
+  lines(CNEVD[[dataset_name[j]]][['x']][1:endrange],  
+        CNEVD[[dataset_name[j]]][['y']][1:endrange],  
+        col=cols[j],  
+        type='b',  
+        pch=16)  # pch=16 for filled circles 
+} 
+
+# Add legend with matching colors 
+legend(x='topright', legend=c('asia', 'child', 'sachs'), col=c('goldenrod', 'seagreen', 'firebrick'), lty=1, pch=16)
+```
+## Now we remove the nodes ordering constraint, searching in the permutation space for the highest score dag.
+
+
+Function that finds best nodes ordering by uniformly sampling the corresponding permutation space.
+
+```{r}
+bn_uniform<-function(score_function, data_df, n_iter){
+  #score function is a function like k2_algorithm, that given an ordering and data, gives as output the list(network,score) of the corresponding best bayesian network
+  nodes<-names(data_df)
+  chain<-vector('list', n_iter)
+  for(i in 1:n_iter){
+    best_network<-score_function(data_df)
+    chain[[i]]<-list(nodes=nodes, dag=best_network[['dag']], score=best_network[['score']])
+    nodes<-sample(nodes)
+    data_df <- data_df |> select(all_of(nodes))
+  }
+  max_index<-which.max(lapply(chain, function(el)(el[['score']])))
+  return(list(chain=chain, best=chain[[max_index]]))
 }
 ```
 
+```{r}
+n_iter<-5
+start.time<-proc.time()
+bn_uniform_result<-bn_uniform(k2_algorithm, sachs, n_iter)
+end.time<-proc.time()
+cat('bn_ordering_sampling duration' ,n_iter, 'iterations: ', end.time-start.time)
+```
 
-##Function that finds best nodes ordering with mcmc-metropolis-hastings-like procedure.
+```{r}
+saveRDS(bn_uniform_result, file=rds_name('unif_ordering'))
+object.size(bn_uniform_result[['chain']])
+network_dag<-bn_uniform_result[['best']][['dag']]
+chain_scores<-sapply(bn_uniform_result[['chain']], function(el)(el[['score']]))
+chain_nodes_orderings<-lapply(bn_uniform_result[['chain']], function(el)(el[['nodes']]))
+print(bn_uniform_result[['best']][['score']])
+print_network(network_dag)
+```
+
+Function that finds best nodes ordering with mcmc-metropolis-hastings-like procedure.
 
 ```{r}
 uniform_transposition_generator<-function(nodes){
@@ -461,6 +578,7 @@ print(bn_mcmc_result[['best']][['score']])
 print_network(network_dag)
 ```
 
+### Function to study how the maximum score obtained in the ordering search increases with the length of the search.
 ```{r}
 print_scores_vs_ordering<-function(chain_scores, chain_nodes_orderings){
   # Sample data
@@ -472,63 +590,43 @@ print_scores_vs_ordering<-function(chain_scores, chain_nodes_orderings){
   labels <- sapply(x, function(vec) paste(vec, collapse = " "))
   
   # Create a basic plot
-  plot(y, xaxt = "n", xlab = "X-axis", ylab = "Y-axis", pch = 19, xlim = c(0,length(x)), ylim = c(min(chain_scores), max(chain_scores)))
+  plot(y, xaxt = "n", xlab = "Nodes permutations", ylab = "Best score", pch = 19, xlim = c(0,length(x)), ylim = c(min(chain_scores), max(chain_scores)))
   
   # Add custom x-axis labels
-  axis(1, at = seq_along(y), labels = labels, las = 2)  # las = 2 rotates labels vertically
+  #axis(1, at = seq_along(y), labels = labels, las = 2)  # las = 2 rotates labels vertically
 }
-```
-
-```{r}
-max_score_vs_iter<-function(chain_scores){ 
-  plot(1:length(chain_scores),cummax(chain_scores),xlab='Iteration',ylab='Running max score',col='blue',type='l') 
+print_scores_vs_ordering <- function(chain_scores, chain_nodes_orderings, logscale=FALSE) {
+  # Sample data
+  y <- chain_scores
+  x <- chain_nodes_orderings
+  
+  # Convert character vectors to single strings
+  labels <- sapply(x, function(vec) paste(vec, collapse = " "))
+  
+  # Set graphical parameters
+  par(mgp = c(2, 0.5, 0))  # Adjust mgp to reduce space (default is c(3, 1, 0))
+  
+  
+  plot(y, xaxt = "n", xlab = "", ylab = "Best score (log)", 
+       pch = 19, xlim = c(0, length(x)), ylim = c(min(chain_scores), max(chain_scores)))
+  
+  
+  # Manually add x-axis label with fine-tuned position using mtext()
+  mtext("Nodes permutations", side = 1, line = 1)
+  # Add custom x-axis labels
+  #axis(1, at = seq_along(y), labels = labels, las = 2)  # las = 2 rotates labels vertically
 }
+
 ```
 
 ```{r}
-print_scores_vs_ordering(chain_scores, chain_nodes_orderings)
-```
-
-```{r}
-max_score_vs_iter(chain_scores)
-```
-
-
-
-##Function that finds best nodes ordering by uniformly sampling the corresponding permutation space.
-
-```{r}
-bn_uniform<-function(score_function, data_df, n_iter){
-  #score function is a function like k2_algorithm, that given an ordering and data, gives as output the list(network,score) of the corresponding best bayesian network
-  nodes<-names(data_df)
-  chain<-vector('list', n_iter)
-  for(i in 1:n_iter){
-    best_network<-score_function(data_df)
-    chain[[i]]<-list(nodes=nodes, dag=best_network[['dag']], score=best_network[['score']])
-    nodes<-sample(nodes)
-    data_df <- data_df |> select(all_of(nodes))
+max_score_vs_iter<-function(chain_scores, logscale=FALSE){ 
+  if(logscale){
+    plot(1:length(chain_scores),cummax(chain_scores),xlab='n iterations (logscale)',ylab='Running max score (log)',col='blue',type='l', log='x') 
+  }else{
+    plot(1:length(chain_scores),cummax(chain_scores),xlab='n iterations',ylab='Running max score (log)',col='blue',type='l') 
   }
-  max_index<-which.max(lapply(chain, function(el)(el[['score']])))
-  return(list(chain=chain, best=chain[[max_index]]))
 }
-```
-
-```{r}
-n_iter<-5
-start.time<-proc.time()
-bn_uniform_result<-bn_uniform(k2_algorithm, sachs, n_iter)
-end.time<-proc.time()
-cat('bn_ordering_sampling duration' ,n_iter, 'iterations: ', end.time-start.time)
-```
-
-```{r}
-saveRDS(bn_uniform_result, file=rds_name('unif_ordering'))
-object.size(bn_uniform_result[['chain']])
-network_dag<-bn_uniform_result[['best']][['dag']]
-chain_scores<-sapply(bn_uniform_result[['chain']], function(el)(el[['score']]))
-chain_nodes_orderings<-lapply(bn_uniform_result[['chain']], function(el)(el[['nodes']]))
-print(bn_uniform_result[['best']][['score']])
-print_network(network_dag)
 ```
 
 ```{r}
@@ -538,14 +636,17 @@ print_scores_vs_ordering(chain_scores, chain_nodes_orderings)
 ```{r}
 max_score_vs_iter(chain_scores)
 ```
+
 ```{r}
 bic_score<-function(dag, data){
   return(score(dag , data = data , type = "bic"))
 }
 ```
 
+### Function to compare the ground truth expected DAG's with the predicted DAG's as function of the length of the ordering search.
+
 ```{r}
-dag_computation<-function(chain_scores,true_dag,chain_dags){  
+errors_vs_iter<-function(chain_scores,true_dag,chain_dags){  
   n_true_edges<-nrow(arcs(true_dag)) 
   # helper function to find the index of the cummax 
    
@@ -570,22 +671,13 @@ dag_computation<-function(chain_scores,true_dag,chain_dags){
    
   #perform the comparison once the index is retrieved 
   errors<-sapply(indexes,function(index, true_dag, our_nets)(compare_dags(index, true_dag, our_nets, n_true_edges = n_true_edges)),true_dag,our_nets=chain_dags) 
-  plot(1:length(errors),errors,xlab='Iteration',ylab='Error',main='Error Comparison',type='l',col='blue') 
+  plot(1:length(errors),errors,xlab='Iteration',ylab='Error',type='l',col='blue') 
   return(errors) 
  
 } 
 ```
 
-```{r}
-dag_computation(
-                sapply(bn_uniform_result[['chain']], function(el)(el[['score']])),
-                true_dag.sachs,
-                lapply(bn_uniform_result[["chain"]],function(el){el[["dag"]]})
-                )
-```
-FILIPPO RUNNA QUESTA CELLA E COMMENTA (togli r da dalle graffe) LA SUCCESSIVA
-
-No max parents, mcmc and uniform sampling of permuatations
+Unconstrained parents: mcmc and uniform sampling of nodes ordering.
 ```{}
 unconstrained_bn_mcmc_results<-setNames(vector("list", 3), c("asia", "child", "sachs"))
 UBMR<-unconstrained_bn_mcmc_results
@@ -610,10 +702,7 @@ for( dataset_name in c('asia','child','sachs')){
 saveRDS(UBUR, file=rds_name('UBUR'))
 ```
 
-
-EMANUELE RUNNA QUESTA CELLA E COMMENTA (togli r da dalle graffe) LA PRECEDENTE
-
-Set max parents, mcmc and uniform sampling of permuatations
+Constrained max parents: mcmc and uniform sampling of nodes ordering.
 ```{r}
 constrained_bn_mcmc_results<-setNames(vector("list", 3), c("asia", "child", "sachs"))
 CBMR<-constrained_bn_mcmc_results
@@ -639,4 +728,118 @@ saveRDS(CBUR, file=rds_name('CBUR'))
 ```
 
 
+## Let's start from a constrained max number of parents:
+```{r}
+readCBMR<-readRDS('CBMR1725155339414.54.rds')
+readCBUR<-readRDS('CBUR1725164868090.98.rds')
+```
+
+
+
+PLOTS ON RESULTS OF THE ORDERING SEARCHES
+
+```{r}
+C_errors_vs_iter_pack<-list(CBMR= setNames(vector("list", length(dataset_names)), dataset_names), 
+                          CBUR=setNames(vector("list", length(dataset_names)), dataset_names))
+C_sea_res_rds_s<-list(CBMR=readCBMR, CBUR=readCBUR)
+```
+
+```{r}
+extract_auxiliary_1<-function(errors_vs_iter_pack, sea_res_rds_s){
+  options(paged.print = FALSE)
+  for(sea_res_name in base::names(sea_res_rds_s)){
+    sea_res_rds<-sea_res_rds_s[[sea_res_name]]
+    for(dataset_name in dataset_names){
+      sea_res<-sea_res_rds[[dataset_name]]
+      print(str(sea_res))
+      object.size(sea_res[['chain']])
+      print(network_dag<-sea_res[['best']][['dag']])
+      chain_scores<-sapply(sea_res[['chain']], function(el)(el[['score']]))
+      chain_dags<-lapply(sea_res[["chain"]],function(el)(el[["dag"]]))
+      chain_nodes_orderings<-lapply(sea_res[['chain']], function(el)(el[['nodes']]))
+      cat('best score: ', sea_res[['best']][['score']])
+      #print_network(network_dag)
+      plot_dag(network_dag)
+      print_scores_vs_ordering(chain_scores, chain_nodes_orderings)
+      max_score_vs_iter(chain_scores, logscale=TRUE)
+      #my_best_bic<-bic_score(create_bn_dag(network_dag), datasets[[dataset_name]])
+      #true_best_bic<-bic_score(true_dags[[dataset_name]], datasets[[dataset_name]])
+      #cat('bic best predicted: ',my_best_bic , 'bic best expected: ',true_best_bic)
+      errors_vs_iter_pack[[sea_res_name]][[dataset_name]]<-errors_vs_iter(chain_scores, true_dags[[dataset_name]], chain_dags)
+    }
+  }
+  return(errors_vs_iter_pack)
+}
+```
+
+```{r}
+plot_auxiliary_1<-function(sea_res_name, errors_vs_iter_pack){
+  # sea_res_name is for example 'CBMR'
+  # Set graphical parameters
+  par(mgp = c(1.5, 0.5, 0))  # Adjust mgp to reduce space (default is c(3, 1, 0)) 
+  
+  ypack<-errors_vs_iter_pack[[sea_res_name]]
+  
+  endrange <- length(ypack[[1]])
+  # Plot the 'asia' dataset with filled dots 
+  plot(1:endrange,  
+       ypack[['asia']][1:endrange],  
+       type='l',  
+       ylim=c(min(unlist(ypack)), max(unlist(ypack))),  
+       ylab="Error",  
+       xlab="Dataset size",  
+       col='goldenrod',  
+       pch=16)  # pch=16 for filled circles 
+   
+  # Loop through and add lines for 'child' and 'sachs' with filled dots 
+  for(dataset_name in c('child', 'sachs') ) { 
+    lines(1:endrange,  
+          ypack[[dataset_name]][1:endrange],  
+          col=dataset_colors[[dataset_name]],  
+          type='l',  
+          pch=16)  # pch=16 for filled circles 
+  } 
+  
+  # Add legend with matching colors 
+  legend(x='topright', legend=c('asia', 'child', 'sachs'), col=c('goldenrod', 'seagreen', 'firebrick'), lty=1, pch=16)
+}
+```
+
+```{r}
+C_errors_vs_iter_pack<-extract_auxiliary_1(C_errors_vs_iter_pack, C_sea_res_rds_s)
+```
+
+
+Constrained number of parents, MCMC search (with ztbinom_generator as proposal generator).
+```{r}
+plot_auxiliary_1('CBMR', C_errors_vs_iter_pack)
+```
+
+Constrained number of parents, uniform search in the permuatation space.
+```{r}
+plot_auxiliary_1('CBUR', C_errors_vs_iter_pack)
+```
+
+## And finally an unconstrained number of parents:
+```{r}
+readUBMR<-readRDS('UBMR1725165402263.55.rds')
+readUBUR<-readRDS('UBUR1725182729436.31.rds') 
+```
+
+```{r}
+U_errors_vs_iter_pack<-list(UBMR= setNames(vector("list", length(dataset_names)), dataset_names), 
+                          UBUR=setNames(vector("list", length(dataset_names)), dataset_names))
+U_sea_res_rds_s<-list(UBMR=readUBMR, UBUR=readUBUR)
+
+U_errors_vs_iter_pack<-extract_auxiliary_1(U_errors_vs_iter_pack, U_sea_res_rds_s)
+```
+
+Unconstrained number of parents, MCMC search (with ztbinom_generator as proposal generator).
+```{r}
+plot_auxiliary_1('UBMR', U_errors_vs_iter_pack)
+```
+
+```{r}
+plot_auxiliary_1('UBUR', U_errors_vs_iter_pack)
+```
 
