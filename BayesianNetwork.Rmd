@@ -586,7 +586,7 @@ dag_computation(
 FILIPPO RUNNA QUESTA CELLA E COMMENTA (togli r da dalle graffe) LA SUCCESSIVA
 
 No max parents, mcmc and uniform sampling of permuatations
-```{r}
+```{}
 unconstrained_bn_mcmc_results<-setNames(vector("list", 3), c("asia", "child", "sachs"))
 UBMR<-unconstrained_bn_mcmc_results
 for( dataset_name in c('asia','child','sachs')){
