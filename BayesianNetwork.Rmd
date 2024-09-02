@@ -29,6 +29,7 @@ conflicts_prefer(dplyr::filter)
 
 ```{r}
 rds_name<-function(title){
+  # For naming saved files with a time-stamp
   return(paste0(title,as.numeric(Sys.time()) * 1000, '.rds'))
 }
 print_grouped_df <- function(grouped_df) {
@@ -52,7 +53,7 @@ print_grouped_df <- function(grouped_df) {
 }
 
 create_bn_dag <- function(dag) {
-
+    # Turn our dag object into bnlearn compatible object
     net_nodes <- names(dag)
 
     our.net.dag <- empty.graph(net_nodes)
@@ -72,6 +73,8 @@ create_bn_dag <- function(dag) {
 options(paged.print = FALSE)
 
 logfactorial<-function(n){
+  # Calculate logarithm of factorial of a number
+  
   if(n>=2){
     res<-sum(log(seq(2, n)))
   }else{
@@ -80,8 +83,10 @@ logfactorial<-function(n){
   return(res)
 }
 
-# Helper Function: Prod_j
+
 Prod_j <- function(df, i, parents, r) {
+  # Helper Function for f_20: Prod_j
+  
   #print(paste("Running Prod_j with i =", i))
   #print(paste("Parents:", paste(parents, collapse = ", ")))
   
@@ -106,8 +111,10 @@ Prod_j <- function(df, i, parents, r) {
   return(result)
 }
 
-# Helper Function: Prod_jk
+
 Prod_jk <- function(df, i, parents) {
+  # Helper Function for f_20: Prod_jk
+  
   #print(paste("Running Prod_jk with i =", i))
   #print(paste("Parents:", paste(parents, collapse = ", ")))
   
@@ -130,8 +137,9 @@ Prod_jk <- function(df, i, parents) {
   }
 }
 
-# Main Function: f_20
 f_20 <- function(original_df, i, parents, r) {
+  # Calculates the K2-score of a node given a dataframe, the index of a node, and the vector r_i of dinstict values for each i-th column
+  
   #print(paste("Running f_20 with i =", i))
   #print(paste("Parents:", paste(parents, collapse = ", ")))
   
@@ -147,9 +155,14 @@ f_20 <- function(original_df, i, parents, r) {
   return(result)
 }
 
-# Algorithm
+
 k2_algorithm <- function(data, nodes=NULL, max_parents = NULL) {
   
+  # Return list with best network and associated score, given:
+  # - a dataframe
+  # - a vector of character nodes (optional; in absence, gets ordering from the dataframe columns ordering)
+  # - a maximum number of parents (optional; in absence, assumes the as maximum number the total number of nodes - 1)
+
   if(is.null(nodes)){
     nodes<-names(data)
   }
@@ -159,25 +172,19 @@ k2_algorithm <- function(data, nodes=NULL, max_parents = NULL) {
   # Initialize the network
   network <- setNames(vector("list", length(nodes)), nodes)
   network[[nodes[1]]]<-character(0)
-  #network[] <- lapply(network, function(x) character(0))
-  #E' PROBABILE CHE CI VOGLIA QUALCOSA DI PIU'SPECIFICO DI UNA LIST, ES. net.dag <- empty.graph(nodes=nodes) 
   
   # Detect the number of available cores
   numCores <- parallel::detectCores()
-  
   # Create a cluster with the desired number of cores
   cl <- makeCluster(numCores - 1)  # Use one less core than available
-  
   # Register the cluster for parallel processing
   registerDoParallel(cl)
   # Ensure cluster is stopped even if an error occurs
   on.exit(stopCluster(cl))
-  # Parallel execution example
-  #stopCluster(cl)
-  
   #Calculate r_i
   r<-map_int(data, n_distinct)
-  # Iterate over each node
+  
+  # Iterate over each node. This is parallelized according to available number of cores
   result<-foreach (i = 2:length(nodes), .combine = 'c', .packages = c('dplyr', 'purrr'), .export = c('logfactorial', 'Prod_jk', 'Prod_j', 'f_20')) %dopar% {
      # Calculate r_i:
 
@@ -198,7 +205,6 @@ k2_algorithm <- function(data, nodes=NULL, max_parents = NULL) {
           score_old <- best_score
         }
       }
-
       # Update parents and score if necessary
       if (!is.null(best_parent)) {
         parents <- c(parents, best_parent)
@@ -207,58 +213,45 @@ k2_algorithm <- function(data, nodes=NULL, max_parents = NULL) {
         proceed <- FALSE
       }
     }
-    
     # Return the parents for the current node
     return(list(list(node = nodes[i], foundparents = if(length(parents) == 0) character(0) else sapply(parents, function(el) nodes[el]), best_score=best_score)))
-
   }
-  #print(result)
   # Assign results to the network
   total_best_score<-0
   for (res in result) {
-    #print('_____________________')
-    #print(typeof(res))
-    #print(str(res))
-    #print('res__________')
-    #print(res)
-    #print('resnode__________')
-    #print(res$node)
-    #print('resparents__________')
-    #print(res$foundparents)
     network[[res$node]] <- res$foundparents
     total_best_score<-total_best_score+res$best_score
   }
   
   return(list(dag=network, score=total_best_score))
 }
-
 ```
 
 ```{r}
 print_network<-function(network, layout = "auto"){ 
-  # Crea un dataframe con tutti i nodi 
+  # Create dataframe with all nodes
   nodes <- tibble(node = names(network)) 
    
-  # Crea un dataframe con gli archi esistenti (quelli t.c. nodi_non_isolati <- V(graph)[degree(graph) > 0]) 
+  # Create dataframe with existing arcs (nodes_non_isolated <- V(graph)[degree(graph) > 0]) 
   edges_existing <- tibble( 
     from = unlist(network), 
     to = rep(names(network), sapply(network, length)) 
   ) 
    
-  # Identifica i nodi isolati 
+  # Identify isolated nodes 
   nodes_isolated <- nodes %>% 
     filter(!(node %in% c(edges_existing$from, edges_existing$to))) 
    
-  # Crea un dataframe con gli archi autoreferenziali per i nodi isolati 
+  # Creates dataframe with self-referenced arcs for isolated nodes (needed for plotting technical reasons)
   edges_isolated <- tibble( 
     from = nodes_isolated$node, 
     to = nodes_isolated$node 
   ) 
      
-# Combina i due dataframe degli archi 
-edges <- bind_rows(edges_existing, edges_isolated) 
+  # Combines the two dataframes 
+  edges <- bind_rows(edges_existing, edges_isolated) 
  
-  # Creazione del grafo 
+  # DAG creation
   graph <- graph_from_data_frame(edges, directed = TRUE) 
   ggraph(graph, layout = layout) + 
     geom_node_point(shape = 21, size = 20, color = "green") + 
@@ -272,10 +265,12 @@ edges <- bind_rows(edges_existing, edges_isolated)
 
 ```{r}
 plot_dag<-function(dag){
+  # Plots dag with graphviz library
   graphviz.plot(create_bn_dag(dag))
 }
 ```
 
+Simple datasets for testing:
 ```{r}
 trial_df <- data.frame(
   x1 = c(1, 1, 0, 1, 0, 0, 1, 0, 1, 0),
@@ -292,34 +287,44 @@ trial_df_zeros <- data.frame(
 
 ```
 
+Test k2_algorithm on simple dataset:
 ```{r}
 network<-k2_algorithm(trial_df)
 print(network[['dag']])
 print(network[['score']])
 print_network(network[['dag']])
 ```
+Now we load and explore three dataset, used in the following analysis. 
+Respectively: asia, child and sachs.
 
+Asia
 ```{r}
 asia <- read_csv('https://www.ccd.pitt.edu/wiki/images/ASIA10k.csv')
 head(asia)
 asia <- asia |> select(asia, smoke, tub, lung, either, bronc, xray, dysp)
+
+# This is the ground-truth expected network associated to the dataset.
 true_dag.asia<- model2network("[asia][smoke][tub|asia][lung|smoke][bronc|smoke][dysp|bronc:either][either|tub:lung][xray|either]")
 ```
-
+Child
 ```{r}
 child <- read_csv('https://www.ccd.pitt.edu/wiki/images/CHILD10k.csv')
 child <- child |> select(BirthAsphyxia, Disease, Sick, DuctFlow, CardiacMixing, LungParench, LungFlow, LVH, Age, Grunting, HypDistrib, HypoxiaInO2, CO2, ChestXray, LVHreport, GruntingReport, LowerBodyO2, RUQO2, CO2Report, XrayReport)
 head(child)
+
+# This is the ground-truth expected network associated to the dataset
 true_dag.child<-model2network("[BirthAsphyxia][Disease|BirthAsphyxia][Sick|Disease][DuctFlow|Disease][CardiacMixing|Disease][LungParench|Disease][LungFlow|Disease][LVH|Disease][Age|Disease:Sick][Grunting|Sick:LungParench][HypDistrib|DuctFlow:CardiacMixing][HypoxiaInO2|CardiacMixing:LungParench][CO2|LungParench][ChestXray|LungParench:LungFlow][LVHreport|LVH][GruntingReport|Grunting][LowerBodyO2|HypDistrib:HypoxiaInO2][RUQO2|HypoxiaInO2][CO2Report|CO2][XrayReport|ChestXray]")
 ```
-
+Sachs
 ```{r}
 sachs <- read_csv('https://www.ccd.pitt.edu/wiki/images/SACHS10k.csv')
 sachs <- sachs |> select(PKC, Plcg, PKA, PIP3, Raf, Jnk, P38, PIP2, Mek, Erk, Akt)
 head(sachs)
+
+# This is the ground-truth expected network associated to the dataset
 true_dag.sachs <- model2network("[PKC][PKA|PKC][Raf|PKC:PKA][Mek|PKC:PKA:Raf][Erk|Mek:PKA][Akt|Erk:PKA][P38|PKC:PKA][Jnk|PKC:PKA][Plcg][PIP3|Plcg][PIP2|Plcg:PIP3]")
 ```
-
+We defined for global usage some list and vectors associated to important features of each dataset (name, expected DAG, maximum number of parents present, univocal color for clearer plotting):
 ```{r}
 dataset_names<-c('asia', 'child', 'sachs')
 datasets<-list(asia=asia, child=child, sachs=sachs)
@@ -336,6 +341,7 @@ Constrained max number of parents according to ground truth expected DAG's
 for(dataset_name in dataset_names){
   network<-k2_algorithm(datasets[[dataset_name]], max_parents = true_max_parents[[dataset_name]] )
   plot_dag(network[['dag']])
+  #graphviz.compare(true_dags[[dataset_name]], create_bn_dag((network[['dag']])))
 }
 ```
 
@@ -344,6 +350,7 @@ Unconstrained max number of parents.
 for(dataset_name in dataset_names){
   network<-k2_algorithm(datasets[[dataset_name]] )
   plot_dag(network[['dag']])
+  #graphviz.compare(true_dags[[dataset_name]], create_bn_dag((network[['dag']])))
 }
 ```
 
@@ -351,6 +358,8 @@ for(dataset_name in dataset_names){
 Error is calculated as the complementary of the F1-score.
 ```{r}
 f1_error<-function(my_dag, true_dag, n_true_edges=NULL){
+  # Calculate "error" with respect to assumed "true" DAG as 1 - F1_score
+  
   if(is.null(n_true_edges)){
     n_true_edges<-nrow(arcs(true_dag))
   }
@@ -363,14 +372,25 @@ f1_error<-function(my_dag, true_dag, n_true_edges=NULL){
 ```
 
 ```{r}
-error_vs_data_size<-function(network_learner, data_df, true_dag){
+error_vs_data_size<-function(network_learner, data_df, true_dag, logscale=FALSE){
+  # Plot (and return x,y coordinates of the plot) error as a function of increasing dataset size
+  # Arguments are:
+  # - network learner: k2_algorithm or alternative with same interface
+  # - data_df: dataset as a dataframe
+  # - true_dag: expected, "ground truth", DAG associated to dataset
+  # - logscale (optional): set logscale for x-axis
+  
   spanned=c(10,20,30,50,100,200,300, 500, 1000, 5000, 10000)
   errors=vector('list', length(spanned))
   for(i in 1:length(spanned)){
     my_dag<-create_bn_dag(network_learner(head(data_df, spanned[i]))[['dag']])
     errors[[i]]<-f1_error(my_dag, true_dag)
   }
-  plot(spanned[1:length(errors)],errors,xlab='Dataset size',ylab='Error',type='l',col='blue') 
+  if(logscale){
+    plot(spanned[1:length(errors)],errors,xlab='Dataset size (logscale)',ylab='Error',type='l',col='blue', log='x')
+  }else{
+    plot(spanned[1:length(errors)],errors,xlab='Dataset size',ylab='Error',type='l',col='blue') 
+  }
   return(list(x=spanned[1:length(errors)], y=errors))
 }
 ```
@@ -380,7 +400,7 @@ First case: initialization with expected nodes ordering and expected max number 
 constrained_nodes_parents_error_vs_datasize<-setNames(vector("list", 3), c("asia", "child", "sachs"))
 CNPEVD<-constrained_nodes_parents_error_vs_datasize
 for( dataset_name in c('asia','child','sachs')){
-  CNPEVD[[dataset_name]]<-error_vs_data_size(function(data)(k2_algorithm(data, max_parents = 2)), datasets[[dataset_name]], true_dags[[dataset_name]])
+  CNPEVD[[dataset_name]]<-error_vs_data_size(function(data)(k2_algorithm(data, max_parents = 2)), datasets[[dataset_name]], true_dags[[dataset_name]], logscale=TRUE)
 }
 saveRDS(CNPEVD, file=rds_name('CNPEVD'))
 ```
@@ -391,7 +411,7 @@ Second case: initialization with expected nodes ordering but 'unconstrained' num
 constrained_nodes_error_vs_datasize<-setNames(vector("list", 3), c("asia", "child", "sachs"))
 CNEVD<-constrained_nodes_error_vs_datasize
 for( dataset_name in c('asia','child','sachs')){
-  CNEVD[[dataset_name]]<-error_vs_data_size(k2_algorithm, datasets[[dataset_name]], true_dags[[dataset_name]])
+  CNEVD[[dataset_name]]<-error_vs_data_size(k2_algorithm, datasets[[dataset_name]], true_dags[[dataset_name]], logscale=TRUE)
 }
 saveRDS(CNEVD, file=rds_name('CNEVD'))
 ```
@@ -471,7 +491,10 @@ Function that finds best nodes ordering by uniformly sampling the corresponding 
 
 ```{r}
 bn_uniform<-function(score_function, data_df, n_iter){
-  #score function is a function like k2_algorithm, that given an ordering and data, gives as output the list(network,score) of the corresponding best bayesian network
+  # Arguments:
+  # - score_function: a function like k2_algorithm, that given an ordering and data, gives as output the list(network,score) of the corresponding best bayesian network
+  # - data_df: dataset as a dataframe
+  # - n_iter: number of random samples from permutation space
   nodes<-names(data_df)
   chain<-vector('list', n_iter)
   for(i in 1:n_iter){
@@ -503,10 +526,12 @@ print(bn_uniform_result[['best']][['score']])
 print_network(network_dag)
 ```
 
-Function that finds best nodes ordering with mcmc-metropolis-hastings-like procedure.
+Function (preceded bu some additional helper functions) that finds best nodes ordering with mcmc-metropolis-hastings-like procedure.
 
 ```{r}
 uniform_transposition_generator<-function(nodes){
+  # Generates new nodes vector that differs, from the given one, by one random transposition of two nodes
+  
   # Choose two distinct indices randomly
   indices <- sample(seq_along(nodes), 2)
   
@@ -518,7 +543,8 @@ uniform_transposition_generator<-function(nodes){
   return(transposed_nodes)
 }
 ztbinom_permutation_generator<-function(nodes,  mean=1,variance=4/5){ 
- 
+  # Generates new nodes vector that differs, from the given one, by k random transpositions of two nodes, k drawn from zero-truncated binomial distribution (its parameters given as optional arguments)
+  
   p<-(1-(variance/mean)) 
   n<-mean/p 
   n_transpositions<-rztbinom(1,size=n,prob=p) 
@@ -532,9 +558,14 @@ ztbinom_permutation_generator<-function(nodes,  mean=1,variance=4/5){
   transposed_nodes<-temp_nodes 
   return(transposed_nodes)   
 }
+
 bn_mcmc<-function(proposal_generator, score_function, data_df, n_iter){ 
-  #proposal generator is a function that given an ordering, randomly samples a new ordering according to some distribution on the permutation space
-  #score function is a function like k2_algorithm, that given an ordering and data, gives as output the list(network,score) of the corresponding best bayesian network
+  # Function for MCMC-Metripolis-Hastings-analogue exploration of the nodes ordering space. Return a list with the full MCMC-chain and the best element of the chain. Each element is a list of: nodes vector, dag of best network according to K2, K2-score of such best DAG
+  # Arguments:
+  # - proposal_generator: a function like uniform_transposition_generator, that given an ordering, randomly samples a new ordering according to some distribution on the permutation space
+  # - score_function: a function like k2_algorithm, that given an ordering and data, gives as output the list(network,score) of the corresponding best bayesian network
+  # - data_df: dataset as a dataframe
+  # - n_iter: number of random samples from permutation space
   nodes<-names(data_df)
   chain<-vector('list', n_iter)
   best_network<-score_function(data_df)
@@ -548,9 +579,9 @@ bn_mcmc<-function(proposal_generator, score_function, data_df, n_iter){
     proposal_data_df <- data_df |> select(all_of(proposal_nodes))
     proposal_best_network<-score_function(proposal_data_df)
     proposal_best_score<-proposal_best_network[['score']]
+    
     if(runif(1) < min(1, exp(best_score-old_best_score))){ #we take exponential because we are dealing with log of probabilities
       nodes<-proposal_nodes
-      #data_df <-proposal_data_df
       best_network<-proposal_best_network
     }
     chain[[i]]<-list(nodes=nodes, dag=best_network[['dag']], score=best_network[['score']])
@@ -607,12 +638,12 @@ print_scores_vs_ordering <- function(chain_scores, chain_nodes_orderings, logsca
   par(mgp = c(2, 0.5, 0))  # Adjust mgp to reduce space (default is c(3, 1, 0))
   
   
-  plot(y, xaxt = "n", xlab = "", ylab = "Best score (log)", 
+  plot(1:length(y),y, xaxt = "s", xlab = "", ylab = "Best score (log)", 
        pch = 19, xlim = c(0, length(x)), ylim = c(min(chain_scores), max(chain_scores)))
   
   
   # Manually add x-axis label with fine-tuned position using mtext()
-  mtext("Nodes permutations", side = 1, line = 1)
+  mtext("Nodes permutations", side = 1, line = 1.5)
   # Add custom x-axis labels
   #axis(1, at = seq_along(y), labels = labels, las = 2)  # las = 2 rotates labels vertically
 }
@@ -647,6 +678,8 @@ bic_score<-function(dag, data){
 
 ```{r}
 errors_vs_iter<-function(chain_scores,true_dag,chain_dags){  
+  # Function to compare the ground truth expected DAG's with the predicted DAG's as function of the length of the ordering search. Return vector of errors evaluated by f1_error function
+  
   n_true_edges<-nrow(arcs(true_dag)) 
   # helper function to find the index of the cummax 
    
@@ -676,9 +709,10 @@ errors_vs_iter<-function(chain_scores,true_dag,chain_dags){
  
 } 
 ```
+### Now we proceed running the searches and storing the results for the different settings presented, and then we show some plots obtained from them.
 
 Unconstrained parents: mcmc and uniform sampling of nodes ordering.
-```{}
+```{r}
 unconstrained_bn_mcmc_results<-setNames(vector("list", 3), c("asia", "child", "sachs"))
 UBMR<-unconstrained_bn_mcmc_results
 for( dataset_name in c('asia','child','sachs')){
@@ -730,6 +764,8 @@ saveRDS(CBUR, file=rds_name('CBUR'))
 
 ## Let's start from a constrained max number of parents:
 ```{r}
+# Loading them after having saved them. (Proceeding this way allowed us to actually ran the previous code in different computers for speeding up the computations, and then analyse all the results in this notebook)
+
 readCBMR<-readRDS('CBMR1725155339414.54.rds')
 readCBUR<-readRDS('CBUR1725164868090.98.rds')
 ```
@@ -746,6 +782,8 @@ C_sea_res_rds_s<-list(CBMR=readCBMR, CBUR=readCBUR)
 
 ```{r}
 extract_auxiliary_1<-function(errors_vs_iter_pack, sea_res_rds_s){
+  # Auxiliary function for handy extraction and manipulation of saved results
+  
   options(paged.print = FALSE)
   for(sea_res_name in base::names(sea_res_rds_s)){
     sea_res_rds<-sea_res_rds_s[[sea_res_name]]
@@ -760,6 +798,7 @@ extract_auxiliary_1<-function(errors_vs_iter_pack, sea_res_rds_s){
       cat('best score: ', sea_res[['best']][['score']])
       #print_network(network_dag)
       plot_dag(network_dag)
+      graphviz.compare(true_dags[[dataset_name]], create_bn_dag(network_dag))
       print_scores_vs_ordering(chain_scores, chain_nodes_orderings)
       max_score_vs_iter(chain_scores, logscale=TRUE)
       #my_best_bic<-bic_score(create_bn_dag(network_dag), datasets[[dataset_name]])
@@ -774,6 +813,8 @@ extract_auxiliary_1<-function(errors_vs_iter_pack, sea_res_rds_s){
 
 ```{r}
 plot_auxiliary_1<-function(sea_res_name, errors_vs_iter_pack){
+  # Auxiliary function for plotting results of different datasets on same plot
+  
   # sea_res_name is for example 'CBMR'
   # Set graphical parameters
   par(mgp = c(1.5, 0.5, 0))  # Adjust mgp to reduce space (default is c(3, 1, 0)) 
@@ -787,7 +828,7 @@ plot_auxiliary_1<-function(sea_res_name, errors_vs_iter_pack){
        type='l',  
        ylim=c(min(unlist(ypack)), max(unlist(ypack))),  
        ylab="Error",  
-       xlab="Dataset size",  
+       xlab="n iterations",  
        col='goldenrod',  
        pch=16)  # pch=16 for filled circles 
    
@@ -838,8 +879,11 @@ Unconstrained number of parents, MCMC search (with ztbinom_generator as proposal
 ```{r}
 plot_auxiliary_1('UBMR', U_errors_vs_iter_pack)
 ```
-
+Unconstrained number of parents, uniform search in the permuatation space.
 ```{r}
 plot_auxiliary_1('UBUR', U_errors_vs_iter_pack)
+```
+```{r}
+save.image(file = "/home/ema/Uni/AdvancedStats/Project/SavedRSessions/2_9_24__00_16.RData") 
 ```
 
