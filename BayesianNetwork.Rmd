@@ -884,6 +884,6 @@ Unconstrained number of parents, uniform search in the permuatation space.
 plot_auxiliary_1('UBUR', U_errors_vs_iter_pack)
 ```
 ```{r}
-save.image(file = "/home/ema/Uni/AdvancedStats/Project/SavedRSessions/2_9_24__00_16.RData") 
+save.image(file = "/home/ema/Uni/AdvancedStats/Project/SavedRSessions/my_session.RData") 
 ```
 
