@@ -3,6 +3,7 @@
 When working with a database of records, one useful approach is to build a probabilistic network that can reveal the dependencies between the variables in the data. This network can then be applied to predict the future behavior of the system being studied [2]. Despite notable advancements in both the theory and practical implementation of belief networks, the actual process of constructing these networks tends to be challenging and time-consuming. An efficient method is required to estimate the relative likelihoods of various belief-network structures, given a collection of cases and a set of specific assumptions.
 ## The algorithm
 The K2 algorithm [3] is a greedy search method used to construct Bayesian networks by incrementally adding parent nodes to each variable, maximizing the posterior probability of the network structure. It operates under the assumption of a predefined node ordering and uses a scoring function to evaluate potential parent sets for each node.
+
 ![image](https://github.com/user-attachments/assets/d373edf7-a78d-4a5c-b027-770d59bf35e6)
 
 ### References
