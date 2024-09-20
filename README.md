@@ -1,4 +1,7 @@
 # Learning the topology of a Bayesian Network from a database of cases using the K2 algorithm
+## Acknowledgements
+This is the final project for the 'Advanced Statistics for Physics Analysis' course in the 'Physics of Data' master program, University of Padua.
+Group: <a href=https://github.com/emanuele-quaglio>Emanuele Quaglio</a>, <a href=https://github.com/FilippoCucchetto>Filippo Cucchetto</a>, Giulia Bellentani. 
 ## The problem
 When working with a database of records, one useful approach is to build a probabilistic network that can reveal the dependencies between the variables in the data. This network can then be applied to predict the future behavior of the system being studied [2]. Despite notable advancements in both the theory and practical implementation of belief networks, the actual process of constructing these networks tends to be challenging and time-consuming. An efficient method is required to estimate the relative likelihoods of various belief-network structures, given a collection of cases and a set of specific assumptions.
 ## The algorithm
