@@ -1,4 +1,4 @@
-# Learning the topology of a Bayesian Network from a database of cases using the K2 algorithm
+# Learning the topology of a Bayesian Network to investigate conditional dependencies in a database using the K2 algorithm
 ## Acknowledgements
 This is the final project for the 'Advanced Statistics for Physics Analysis' course in the 'Physics of Data' master program, University of Padua.
 Group: <a href=https://github.com/emanuele-quaglio>Emanuele Quaglio</a>, <a href=https://github.com/FilippoCucchetto>Filippo Cucchetto</a>, Giulia Bellentani. 
